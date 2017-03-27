@@ -70,10 +70,10 @@ case "$1" in
         esac
         ;;
     button/volumedown)
-        amixer set Master 10-
+        amixer set Master 5-
         ;;
     button/volumeup)
-        amixer set Master 10+
+        amixer set Master 5+
         ;;
     button/mute)
         amixer set Master toggle
