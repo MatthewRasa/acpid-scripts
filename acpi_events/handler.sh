@@ -59,7 +59,7 @@ case "$1" in
     button/lid)
         case "$3" in
             close)
-		systemctl suspend
+	            systemctl suspend
                 logger 'LID closed'
                 ;;
             open)

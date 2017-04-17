@@ -1,82 +1,108 @@
 #!/bin/bash
-declare -ra resolutions=("1280x768" "1920x1080")
-declare -r external_config=~/.config/devices/monitor_config.txt
-declare -r currmode_config=~/.config/devices/current_mode.txt
-declare -a displays=($(xrandr | grep " connected" | awk '{ print $1 }'))
+declare -r lckfile=~/.config/devices/.monitor-config.lck
+declare hcreload=true
 
-declare -r external_res=$([[ -f "$external_config" ]] &&
-	echo "$(<"$external_config")" || echo "--auto")
+get_connected() {
+	echo "$(xrandr | grep ' connected' | awk '{ print $1 }')"
+}
 
-declare -r currmode=$([[ -f "$currmode_config" ]] &&
-	echo "$(<"$currmode_config")" || echo "")
+get_active() {
+	echo "$(xrandr --listactivemonitors | grep '/' | awk '{ print $4 }')"
+}
 
-get_target_res() {
-	local target=""
-	if [[ "$1" == "auto" ]]; then
-		target="--auto"
-	else
-		for res in "${resolutions[@]}"; do
-			[[ "$1" == "$res" ]] && target="--mode $res"
-		done
+do_reload() {
+	if ${hcreload}; then
+		touch "${lckfile}"
+		herbstclient reload
 	fi
-	echo "$target"
 }
 
-set_currmode() {
-	mkdir -p "$(dirname "$currmode_config")"
-	echo $1 >"$currmode_config"
+set_primary() {
+	local -r active=$(get_active)
+	local -r disp0="$(echo $(get_connected) | awk '{print $1 }')"
+	local -r disp1="$(echo ${active} | awk '{ print $NF }')"
+	if [[ "${active}" != "${disp0}" ]]; then
+		xrandr --output ${disp0} --auto --output ${disp1} --off
+		do_reload
+	fi
+	return 0
 }
 
-case "$1" in
-	primary)
-		declare comm="xrandr --output ${displays[0]} --auto"
-		for disp in ${displays[@]:1}; do
-			comm="$comm --output $disp --off"
-		done
-		;;
-	secondary)
-		declare comm="xrandr"
-		declare -ri last=$((${#displays[@]} - 1))
-		for disp in ${displays[@]:0:$last}; do
-			comm="$comm --output $disp --off"
-		done
-		comm="$comm --output ${displays[$last]} $external_res"
-		;;
-	extend|extended)
-		declare comm="xrandr --output ${displays[0]} --auto"
-		declare prev=${displays[0]}
-		for disp in ${displays[@]:1}; do
-			comm="$comm --output $disp $external_res --right-of $prev"
-			prev=$disp
-		done
-		;;
-	set-external)
-		declare target="$(get_target_res "$2")"
-		while [[ -z "$target" ]]; do
-			echo -e "Select external resolution:\n\tauto"
-			for res in "${resolutions[@]}"; do
-				echo -e "\t$res"
-			done
-			echo -n "> "
-			read target
-			target="$(get_target_res "$target")"
-		done
+set_secondary() {
+	local -r connected=$(get_connected)
+	local -r disp0="$(echo ${connected} | awk '{ print $1 }')"
+	local -r disp1="$(echo ${connected} | awk '{ print $2 }')"
+	if [[ $(echo ${connected} | wc -w ) -ne 2 ]]; then
+		echo "Second display not connected."
+		return 1
+	elif [[ "$(get_active)" != "${disp1}" ]]; then
+		xrandr --output ${disp0} --off --output ${disp1} --auto
+		do_reload
+		return 0
+	fi
+}
 
-		mkdir -p "$(dirname "$external_config")"
-		echo "$target" >"$external_config"
-		[[ -n "$currmode" ]] && $0 "$currmode"
-		exit 0
+set_extend() {
+	local -r connected=$(get_connected)
+	local -r disp0="$(echo ${connected} | awk '{ print $1 }')"
+	local -r disp1="$(echo ${connected} | awk '{ print $2 }')"
+	if [[ $(echo ${connected} | wc -w ) -ne 2 ]]; then
+		echo "Second display not connected."
+		return 1
+	elif [[ "$(get_active)" != "${connected}" ]]; then
+			xrandr --output ${disp0} --auto --output ${disp1} --auto \
+					--right-of ${disp0} --auto
+		do_reload
+		return 0
+	fi
+}
+
+display_help() {
+	echo "Usage: monitor-config <detect|primary|secondary|extend>"
+}
+
+# Trap monitor-config call from herbstclient reload
+if [[ -f "${lckfile}" ]]; then
+	rm -f "${lckfile}"
+	exit 0
+fi
+
+# Parse options
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--no-reload)
+		hcreload=false
 		;;
 	*)
-		echo -n "Usage: monitor-config <primary|secondary|extend|set-external [auto"
-		for res in "${resolutions[@]}"; do
-			echo -n "|$res"
-		done
-		echo "]>"
-		exit 1
-esac
+		break
+		;;
+	esac
+	shift 1
+done
 
-set_currmode "$1"
-$comm
-herbstclient reload
-exit 0
+# Execute command
+declare -i rtn=0
+case "$1" in
+	detect)
+		[[ $(echo $(get_connected) | wc -w) -gt 1 ]] \
+			&& set_extend || set_primary
+		rtn=$?
+		;;
+	primary)
+		set_primary
+		rtn=$?
+		;;
+	secondary)
+		set_secondary
+		rtn=$?
+		;;
+	extend|extended)
+		set_extend
+		rtn=$?
+		;;
+	*)
+		display_help
+		rtn=1
+		;;
+esac
+exit $rtn
