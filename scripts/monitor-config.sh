@@ -84,8 +84,7 @@ done
 declare -i rtn=0
 case "$1" in
 	detect)
-		[[ $(echo $(get_connected) | wc -w) -gt 1 ]] \
-			&& set_extend || set_primary
+		[[ $(echo $(get_connected) | wc -w) -gt 1 ]] && set_extend || set_primary
 		rtn=$?
 		;;
 	primary)
